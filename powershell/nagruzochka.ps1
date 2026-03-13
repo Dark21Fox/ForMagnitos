@@ -1,25 +1,34 @@
+#!/bin/bash
+
 # RAM
-$os = Get-CimInstance Win32_OperatingSystem
-$totalRAM = [math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
-$usedRAM  = [math]::Round(($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / 1MB, 2)
+RAM_TOTAL=$(free -m | awk '/^Mem:/ {print $2}')
+RAM_USED=$(free -m | awk '/^Mem:/ {print $3}')
 
-# SWAP (PageFile)
-$pageFile = Get-CimInstance Win32_PageFileUsage
-$totalSwap = [math]::Round($pageFile.AllocatedBaseSize / 1KB, 2)
-$usedSwap  = [math]::Round($pageFile.CurrentUsage / 1KB, 2)
+# SWAP
+SWAP_USED=$(free -m | awk '/^Swap:/ {print $3}')
 
-# CPU
-$cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
+# Load Average (1 min)
+LA=$(cat /proc/loadavg | awk '{print $1}')
 
-# Диски
-$disks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
-    $total = [math]::Round($_.Size / 1GB, 2)
-    $used  = [math]::Round(($_.Size - $_.FreeSpace) / 1GB, 2)
-    "$($_.DeviceID) Total:${total}GB Used:${used}GB"
-}
-$disksStr = $disks -join "; "
+# CPU usage (%)
+CPU=$(top -bn1 | grep "Cpu(s)" | awk '{print $2 + $4}')
+
+# DISK
+DISK_INFO=""
+DISK_DATA=$(df -h --output=source,size,used,pcent,target | grep '^/dev/sd')
+
+while IFS= read -r line; do
+    MOUNT=$(echo "$line" | awk '{print $5}')
+    TOTAL=$(echo "$line" | awk '{print $2}')
+    USED=$(echo "$line"  | awk '{print $3}')
+    DEV=$(echo "$line"   | awk '{print $1}' | sed 's|/dev/||')
+
+    DISK_INFO="${DISK_INFO}|DISK_${DEV}_MOUNT=${MOUNT},TOTAL=${TOTAL},USED=${USED}"
+done <<EOF
+$DISK_DATA
+EOF
 
 # Итоговая строка
-$result = "RAM Total:${totalRAM}GB Used:${usedRAM}GB|SWAP Total:${totalSwap}GB Used:${usedSwap}GB|CPU Load:${cpu}%|DISKS: $disksStr"
+RESULT="RAM_TOTAL=${RAM_TOTAL}MB|RAM_USED=${RAM_USED}MB|SWAP_USED=${SWAP_USED}MB|LA=${LA}|CPU=${CPU}%${DISK_INFO}"
 
-Write-Output $result
+echo "$RESULT"
