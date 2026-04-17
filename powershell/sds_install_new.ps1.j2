@@ -1,0 +1,97 @@
+# скрипт для МК на которых все принтера приведены к стандарту 
+
+# Поставить принтер по умолчанию
+try {
+    $default_printer = Get-CimInstance -Class Win32_Printer | Where-Object { $_.Name -like "*printerA4" }
+    Invoke-CimMethod -InputObject $default_printer -MethodName SetDefaultPrinter
+} catch {}
+
+# Основные переменные и списки
+$allprinters=Get-Printer
+$new_mm_pr= ('p{{code}}mobile_1', 'p{{code}}mobile_2', 'p{{code}}mobile_3')
+
+# Функция проверки корректности драйвера принтера
+function chk_drv ($nm_pr,$ip_pr)
+{
+    $printer_model = 'no_model'
+    try { # BIXOLON
+        $pwd = ConvertTo-SecureString "password" -AsPlainText -Force
+        $cred = New-Object Management.Automation.PSCredential ('admin', $pwd)
+        $parsed = (Invoke-WebRequest "http://$ip_pr/etc.htm" -cred $cred -UseBasicParsing).Content
+        $model_bixolon = [regex]::Match($parsed, 'name="system_name".*?value="(.*?)"').Groups[1].Value
+        if ($model_bixolon -eq 'SPP-L3000') { $printer_model = "BIXOLON $model_bixolon - BPL-Z" }
+    } catch {}
+    if ($printer_model -eq 'no_model') {
+        try { # Zebra
+            $zapros=(Invoke-WebRequest -Uri "http://$ip_pr" -UseBasicParsing ).RawContent
+            $pattern = '(?<=ZTC\s)[A-Z0-9]+(?=\-203dpi)'
+            $model_zebra = ([regex]::Match($zapros, $pattern)).value
+            if ($model_zebra -eq 'ZQ610') { $printer_model = "Zebra $model_zebra - CPCL" }
+        } catch {}
+    }
+    if ($printer_model -ne 'no_model') {
+        $printer = Get-Printer -Name $nm_pr -ErrorAction SilentlyContinue
+        if ($printer) {
+        if ($printer.DriverName -ne $printer_model) {
+            Write-Output "ReInstall driver $printer_model"
+            gwmi win32_printer -Filter "drivername='$($printer.DriverName)'" | ForEach-Object {
+            $_.DriverName = $printer_model
+            $_.Put() }
+        } } }
+}
+
+########## sds install ZD230, iE4S, BIXOLON  ##########
+function termo_pr ($termo_name)
+{
+    $pok=Get-Printer | select-object Name,DriverName | Where-Object {$_.Name -match $termo_name} 
+    Switch(1)
+    {
+        {$pok -match "ZD230"}
+        {&C:\Windows\Scripts\server\sds\ssdal.exe /p "$termo_name" settings reset; write-host "import settings $termo_name"; &"C:\Windows\Scripts\server\sds\ssdal.exe" /p "$termo_name" /q settings import "C:\Windows\Scripts\server\sds\settingZD230.sds"}    
+        {$pok -match "BIXOLON"}
+        {&write-host "import settings $termo_name"; &"C:\Windows\Scripts\server\sds\ssdal.exe" /p "$termo_name" /q settings import "C:\Windows\Scripts\server\sds\settingbixolonxd3.sds"}  
+        {$pok -match "iE4S"}
+        {&write-host "import settings $termo_name"; &"C:\Windows\Scripts\server\sds\ssdal.exe" /p "$termo_name" /q settings import "C:\Windows\Scripts\server\sds\settingiE4S.sds"}    
+        default {write-host "Printer $termo_name not found"}
+    }
+}
+
+########## sds install settingZQ610 and BIXOLON  ##########
+function mobil_pr ($mlp)
+{
+    foreach ($name_pr in $mlp)
+    {
+        $mobile=Get-Printer | select-object Name,DriverName | Where-Object {$_.Name -match $name_pr}               
+        Switch(1)
+        {
+            {$mobile -match 'Zebra'}
+            {write-host "import settings $name_pr";&"C:\Windows\Scripts\server\sds\ssdal.exe" /p "$name_pr" /q settings import "C:\Windows\Scripts\server\sds\settingZQ610.sds"}
+            {$mobile -match 'BIXOLON'}
+            {
+                {% if type_format in ['Ультракон'] %}
+                if ($name_pr -eq 'p{{code}}mobile_2') {write-host "import settings $name_pr";&"C:\Windows\Scripts\server\sds\ssdal.exe" /p "$name_pr" /q settings import "C:\Windows\Scripts\server\sds\bix_iltra.sds"}
+                else {write-host "import settings $name_pr";&"C:\Windows\Scripts\server\sds\ssdal.exe" /p "$name_pr" /q settings import "C:\Windows\Scripts\server\sds\settingbixolon.sds"}
+                {% else %}
+                write-host "import settings $name_pr";&"C:\Windows\Scripts\server\sds\ssdal.exe" /p "$name_pr" /q settings import "C:\Windows\Scripts\server\sds\settingbixolon.sds"
+                {% endif %}
+            }
+            default {write-host "Printer $name_pr not found"}
+        }
+    }
+}
+
+#Основная часть скрипта
+function new_chk
+{
+if (tnc 192.168.151.91 -Port 80 -InformationLevel Quiet) {chk_drv -ip_pr 192.168.151.91 -nm_pr 'p{{code}}mobile_1'}
+if (tnc 192.168.151.92 -Port 80 -InformationLevel Quiet) {chk_drv -ip_pr 192.168.151.92 -nm_pr 'p{{code}}mobile_2'}
+if (tnc 192.168.151.93 -Port 80 -InformationLevel Quiet) {chk_drv -ip_pr 192.168.151.93 -nm_pr 'p{{code}}mobile_3'}
+}
+
+Switch -Regex (1)
+{
+    {$allprinters.Name -match 'p{{code}}termo_1'} {termo_pr -termo_name 'p{{code}}termo_1'}
+    {$allprinters.Name -match 'p{{code}}mobile_*'} {new_chk; mobil_pr -mlp $new_mm_pr}
+    default {write-host "variable is null"}
+}
+exit
