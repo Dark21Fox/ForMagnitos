@@ -1,0 +1,3 @@
+wmic path win32_pnpentity where "name like '%Base%' or name like '%Basic%' or name like '%Базовый%'" get deviceid
+wmic path win32_VideoController get PNPDeviceID, name
+Get-PnpDevice | Where-Object {$_.Class -eq "Display"} | Select-Object Name, DeviceID
